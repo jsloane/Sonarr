@@ -301,6 +301,11 @@ namespace NzbDrone.Common.Extensions
             return Path.Combine(GetAppDataPath(appFolderInfo), "MediaCover");
         }
 
+        public static string GetNotificationTemplatesPath(this IAppFolderInfo appFolderInfo)
+        {
+            return Path.Combine(GetAppDataPath(appFolderInfo), "NotificationTemplates");
+        }
+
         public static string GetUpdateLogFolder(this IAppFolderInfo appFolderInfo)
         {
             return Path.Combine(GetAppDataPath(appFolderInfo), UPDATE_LOG_FOLDER_NAME);

@@ -29,9 +29,16 @@ namespace NzbDrone.Core.Notifications.Email
 
         public override void OnGrab(GrabMessage grabMessage)
         {
-            var body = $"{grabMessage.Message} sent to queue.";
+            var html = false;
+            var body = grabMessage.Message;
 
-            SendEmail(Settings, EPISODE_GRABBED_TITLE_BRANDED, body);
+            if (!string.IsNullOrEmpty(grabMessage.MessageHtml))
+            {
+                body = grabMessage.MessageHtml;
+                html = true;
+            }
+
+            SendEmail(Settings, grabMessage.Subject, body, html);
         }
 
         public override void OnDownload(DownloadMessage message)

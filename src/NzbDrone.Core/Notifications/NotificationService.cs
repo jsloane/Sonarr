@@ -1,7 +1,9 @@
 ﻿using System;
 using System.Collections.Generic;
+using System.IO;
 using System.Linq;
 using NLog;
+using NzbDrone.Common.EnvironmentInfo;
 using NzbDrone.Common.Extensions;
 using NzbDrone.Core.Download;
 using NzbDrone.Core.HealthCheck;
@@ -28,17 +30,20 @@ namespace NzbDrone.Core.Notifications
           IHandleAsync<RenameCompletedEvent>,
           IHandleAsync<HealthCheckCompleteEvent>
     {
+        private readonly IAppFolderInfo _appFolderInfo;
         private readonly INotificationFactory _notificationFactory;
         private readonly Logger _logger;
 
-        public NotificationService(INotificationFactory notificationFactory, Logger logger)
+        public NotificationService(IAppFolderInfo appFolderInfo, INotificationFactory notificationFactory, Logger logger)
         {
+            _appFolderInfo = appFolderInfo;
             _notificationFactory = notificationFactory;
             _logger = logger;
         }
 
         private string GetMessage(Series series, List<Episode> episodes, QualityModel quality)
         {
+            var fallbackMessage = "";
             var qualityString = quality.Quality.ToString();
 
             if (quality.Revision.Version > 1)
@@ -57,24 +62,117 @@ namespace NzbDrone.Core.Notifications
             {
                 var episode = episodes.First();
 
-                return string.Format("{0} - {1} - {2} [{3}]",
+                fallbackMessage = string.Format("{0} - {1} - {2} [{3}]",
                                          series.Title,
                                          episode.AirDate,
                                          episode.Title,
                                          qualityString);
             }
+            else
+            {
+                var episodeNumbers = string.Concat(episodes.Select(e => e.EpisodeNumber)
+                                                        .Select(i => string.Format("x{0:00}", i)));
 
-            var episodeNumbers = string.Concat(episodes.Select(e => e.EpisodeNumber)
-                                                       .Select(i => string.Format("x{0:00}", i)));
+                var episodeTitles = string.Join(" + ", episodes.Select(e => e.Title));
 
-            var episodeTitles = string.Join(" + ", episodes.Select(e => e.Title));
+                fallbackMessage = string.Format("{0} - {1}{2} - {3} [{4}]",
+                                        series.Title,
+                                        episodes.First().SeasonNumber,
+                                        episodeNumbers,
+                                        episodeTitles,
+                                        qualityString);
+            }
 
-            return string.Format("{0} - {1}{2} - {3} [{4}]",
-                                    series.Title,
-                                    episodes.First().SeasonNumber,
-                                    episodeNumbers,
-                                    episodeTitles,
-                                    qualityString);
+            var seriesType = "";
+
+            switch (series.SeriesType)
+            {
+                case SeriesTypes.Anime:
+                    seriesType = "Anime";
+                    break;
+                case SeriesTypes.Daily:
+                    seriesType = "Daily";
+                    break;
+                default:
+                    seriesType = "Standard";
+                    break;
+            }
+
+            var message = GetProcessedTemplate(seriesType, "EpisodeGrabbedBody", "txt", series, episodes, quality);
+
+            if (string.IsNullOrEmpty(message))
+            {
+                message = fallbackMessage;
+            }
+
+            return message;
+        }
+
+        private string GetMessageHtml(Series series, List<Episode> episodes, QualityModel quality)
+        {
+            var seriesType = "";
+
+            switch (series.SeriesType)
+            {
+                case SeriesTypes.Anime:
+                    seriesType = "Anime";
+                    break;
+                case SeriesTypes.Daily:
+                    seriesType = "Daily";
+                    break;
+                default:
+                    seriesType = "Standard";
+                    break;
+            }
+
+            return GetProcessedTemplate(seriesType, "EpisodeGrabbedBody", "html", series, episodes, quality);
+        }
+
+        private string GetSubject(Series series, List<Episode> episodes, QualityModel quality)
+        {
+            var seriesType = "";
+
+            switch (series.SeriesType)
+            {
+                case SeriesTypes.Anime:
+                    seriesType = "Anime";
+                    break;
+                case SeriesTypes.Daily:
+                    seriesType = "Daily";
+                    break;
+                default:
+                    seriesType = "Standard";
+                    break;
+            }
+
+            return GetProcessedTemplate(seriesType, "EpisodeGrabbedSubject", "txt", series, episodes, quality);
+        }
+
+        private string GetProcessedTemplate(string filenamePrefix, string filename, string filenameExtension, Series series, List<Episode> episodes, QualityModel quality)
+        {
+            var file = Path.Combine(_appFolderInfo.GetNotificationTemplatesPath(), $"{filenamePrefix}{filename}.{filenameExtension}");
+
+            if (!File.Exists(file))
+            {
+                file = Path.Combine(_appFolderInfo.GetNotificationTemplatesPath(), $"{filename}.{filenameExtension}");
+            }
+
+            if (!File.Exists(file))
+            {
+                return null;
+            }
+
+            var sr = new StreamReader(file);
+
+            var template = sr.ReadToEnd();
+            sr.Close();
+
+            var episode = episodes.First();
+
+            template = template.Replace("@SeriesTitle", series.Title, StringComparison.Ordinal);
+            template = template.Replace("@EpisodeTitle", episode.Title, StringComparison.Ordinal);
+
+            return template;
         }
 
         private bool ShouldHandleSeries(ProviderDefinition definition, Series series)
@@ -115,6 +213,8 @@ namespace NzbDrone.Core.Notifications
             var grabMessage = new GrabMessage
             {
                 Message = GetMessage(message.Episode.Series, message.Episode.Episodes, message.Episode.ParsedEpisodeInfo.Quality),
+                MessageHtml = GetMessageHtml(message.Episode.Series, message.Episode.Episodes, message.Episode.ParsedEpisodeInfo.Quality),
+                Subject = GetSubject(message.Episode.Series, message.Episode.Episodes, message.Episode.ParsedEpisodeInfo.Quality),
                 Series = message.Episode.Series,
                 Quality = message.Episode.ParsedEpisodeInfo.Quality,
                 Episode = message.Episode,
